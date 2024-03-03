@@ -3,9 +3,16 @@
 #include <string>
 #include <vector>
 
+enum class SdfPrimitiveType
+{
+  SPHERE,
+  BOX,
+  CYLINDER
+};
+
 struct SdfObject
 {
-  unsigned type;
+  SdfPrimitiveType type;
   unsigned params_offset; // in parameters vector
   unsigned params_count;
   float distance_mult = 1.0f;

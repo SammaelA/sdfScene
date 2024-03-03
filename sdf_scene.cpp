@@ -16,13 +16,13 @@ float dist_prim(const SdfScene &sdf, const SdfObject &prim, float3 p)
 
   switch (prim.type)
   {
-  case 1:
+  case SdfPrimitiveType::SPHERE:
   {
     float r = sdf.parameters[prim.params_offset + 0];
     // fprintf(stderr, "sphere %f %f %f - %f",pos.x, pos.y, pos.z, r);
     return length(pos) - r;
   }
-  case 4:
+  case SdfPrimitiveType::BOX:
   {
     float3 size(sdf.parameters[prim.params_offset + 0],
                 sdf.parameters[prim.params_offset + 1],
@@ -31,7 +31,7 @@ float dist_prim(const SdfScene &sdf, const SdfObject &prim, float3 p)
     float3 q = abs(pos) - size;
     return length(max(q, float3(0.0f))) + min(max(q.x, max(q.y, q.z)), 0.0f);
   }
-  case 5:
+  case SdfPrimitiveType::CYLINDER:
   {
     float h = sdf.parameters[prim.params_offset + 0];
     float r = sdf.parameters[prim.params_offset + 1];
