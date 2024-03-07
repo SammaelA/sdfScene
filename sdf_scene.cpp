@@ -4,8 +4,9 @@
 
 using namespace LiteMath;
 
-float dist_prim(const SdfScene &sdf, const SdfObject &prim, float3 p)
+float eval_dist_prim(const SdfScene &sdf, unsigned prim_id, float3 p)
 {
+  const SdfObject &prim = sdf.objects[prim_id];
   float3 pos = prim.transform * p;
   // printf("%f %f %f -- %f %f %f\n", p.x, p.y, p.z, pos.x, pos.y, pos.z);
   // printf("%f %f %f %f\n %f %f %f %f\n %f %f %f %f\n %f %f %f %f\n",
@@ -46,23 +47,64 @@ float dist_prim(const SdfScene &sdf, const SdfObject &prim, float3 p)
   return -1000;
 }
 
-float get_dist(const SdfScene &sdf, float3 p)
+float eval_dist_conjunction(const SdfScene &sdf, unsigned conj_id, LiteMath::float3 p)
+{
+  const SdfConjunction &conj = sdf.conjunctions[conj_id];
+  float conj_d = -1e6;
+  for (unsigned pid = conj.offset; pid < conj.offset + conj.size; pid++)
+  {
+    float prim_d = sdf.objects[pid].distance_mult * eval_dist_prim(sdf, pid, p) + sdf.objects[pid].distance_add;
+    conj_d = max(conj_d, sdf.objects[pid].complement ? -prim_d : prim_d);
+  }
+  return conj_d;
+}
+
+float eval_dist_scene(const SdfScene &sdf, float3 p)
 {
   float d = 1e6;
-  for (auto &conj : sdf.conjunctions)
-  {
-    float conj_d = -1e6;
-    for (unsigned pid = conj.offset; pid < conj.offset + conj.size; pid++)
-    {
-      float prim_d = sdf.objects[pid].distance_mult * dist_prim(sdf, sdf.objects[pid], p) + sdf.objects[pid].distance_add;
-      // fprintf(stderr, "prim %f", prim_d);
-      conj_d = max(conj_d, sdf.objects[pid].complement ? -prim_d : prim_d);
-    }
-    // fprintf(stderr, "%f %f\n", d, conj_d);
-    d = min(d, conj_d);
-  }
-  // fprintf(stderr, "\n");
+  for (unsigned i=0;i<sdf.conjunctions.size();i++)
+    d = min(d, eval_dist_conjunction(sdf, i, p));
   return d;
+}
+
+bool sdf_conjunction_sphere_tracing(const SdfScene &sdf, unsigned conj_id, const LiteMath::AABB &sdf_bbox, 
+                                    const LiteMath::float3 &pos, const LiteMath::float3 &dir,
+                                    LiteMath::float3 *surface_pos,
+                                    LiteMath::float3 *surface_normal)
+{
+  constexpr float EPS = 1e-5;
+  float t = 0;
+  float tFar = 1e4;
+  if (!sdf_bbox.contains(pos))
+  {
+    if (!sdf_bbox.intersects(pos, dir, &t, &tFar))
+      return false;
+  }
+  int iter = 0;
+  float d = eval_dist_conjunction(sdf, conj_id, pos + t * dir);
+  while (iter < 1000 && d > EPS && t < tFar)
+  {
+    t += d + EPS;
+    d = eval_dist_conjunction(sdf, conj_id, pos + t * dir);
+    iter++;
+  }
+
+  if (surface_pos)
+    *surface_pos = pos + t * dir;
+
+  if (surface_normal)
+  {
+    float3 p0 = pos + t * dir;
+    constexpr float h = 0.001;
+    float ddx = (eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(h, 0, 0)) - eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(-h, 0, 0))) / (2 * h);
+    float ddy = (eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(0, h, 0)) - eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(0, -h, 0))) / (2 * h);
+    float ddz = (eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(0, 0, h)) - eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(0, 0, -h))) / (2 * h);
+    
+    *surface_normal = normalize(float3(ddx, ddy, ddz));
+    //fprintf(stderr, "st %d (%f %f %f)\n", iter, surface_normal->x, surface_normal->y, surface_normal->z);
+  }
+  // fprintf(stderr, "st %d (%f %f %f)", iter, p0.x, p0.y, p0.z);
+  return d <= EPS;
 }
 
 bool sdf_sphere_tracing(const SdfScene &sdf, const AABB &sdf_bbox, const float3 &pos, const float3 &dir,
@@ -77,16 +119,16 @@ bool sdf_sphere_tracing(const SdfScene &sdf, const AABB &sdf_bbox, const float3 
       return false;
   }
   int iter = 0;
-  float d = get_dist(sdf, pos + t * dir);
+  float d = eval_dist_scene(sdf, pos + t * dir);
   while (iter < 1000 && d > EPS && t < tFar)
   {
     t += d + EPS;
-    d = get_dist(sdf, pos + t * dir);
+    d = eval_dist_scene(sdf, pos + t * dir);
     iter++;
   }
   if (surface_pos)
     *surface_pos = pos + t * dir;
-  // fprintf(stderr, "st %d (%f %f %f)", iter, p0.x, p0.y, p0.z);
+
   return d <= EPS;
 }
 
