@@ -94,5 +94,6 @@ bool sdf_sphere_tracing(const SdfSceneView &sdf, const LiteMath::AABB &sdf_bbox,
                         LiteMath::float3 *surface_pos = nullptr);
 
 // save/load scene
+void save_sdf_scene_hydra(const SdfScene &scene, const std::string &folder, const std::string &name);
 void save_sdf_scene(const SdfScene &scene, const std::string &path);
 void load_sdf_scene(SdfScene &scene, const std::string &path);
