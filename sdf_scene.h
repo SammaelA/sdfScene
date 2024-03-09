@@ -34,26 +34,63 @@ struct SdfScene
   std::vector<SdfConjunction> conjunctions;
 };
 
+//all interfaces use SdfSceneView to be independant of how exactly 
+//SDF scenes are stored
+struct SdfSceneView
+{
+  SdfSceneView() = default;
+  SdfSceneView(const SdfScene &scene)
+  {
+    parameters = scene.parameters.data();
+    objects = scene.objects.data();
+    conjunctions = scene.conjunctions.data();
+
+    parameters_count = scene.parameters.size();
+    objects_count = scene.objects.size();
+    conjunctions_count = scene.conjunctions.size();
+  }
+  SdfSceneView(const std::vector<float> &_parameters, 
+               const std::vector<SdfObject> &_objects,
+               const std::vector<SdfConjunction> &_conjunctions)
+  {
+    parameters = _parameters.data();
+    objects = _objects.data();
+    conjunctions = _conjunctions.data();
+
+    parameters_count = _parameters.size();
+    objects_count = _objects.size();
+    conjunctions_count = _conjunctions.size();
+  }
+
+  const float *parameters;
+  const SdfObject *objects;
+  const SdfConjunction *conjunctions;
+
+  unsigned parameters_count;
+  unsigned objects_count;
+  unsigned conjunctions_count;
+};
+
 // evaluate distance to a specific primitive in scene
-float eval_dist_prim(const SdfScene &sdf, unsigned prim_id, LiteMath::float3 p);
+float eval_dist_prim(const SdfSceneView &sdf, unsigned prim_id, LiteMath::float3 p);
 
 // evaluate distance to a specific conjunction (a single primitive or intersection of primitives)
-float eval_dist_conjunction(const SdfScene &sdf, unsigned conj_id, LiteMath::float3 p);
+float eval_dist_conjunction(const SdfSceneView &sdf, unsigned conj_id, LiteMath::float3 p);
 
 // evaluate distance to a whole scene (minimum of distances to all conjunctions)
-float eval_dist_scene(const SdfScene &sdf, LiteMath::float3 p);
+float eval_dist_scene(const SdfSceneView &sdf, LiteMath::float3 p);
 
 // perform sphere tracing to find ray intersection with a specific conjunction and inside given bbox
 // (it can be smaller than real bbox of conjunction). Use with acceleration structure on conjunction bboxes
 // dir vector MUST be normalized
-bool sdf_conjunction_sphere_tracing(const SdfScene &sdf, unsigned conj_id, const LiteMath::AABB &bbox, 
+bool sdf_conjunction_sphere_tracing(const SdfSceneView &sdf, unsigned conj_id, const LiteMath::AABB &bbox, 
                                     const LiteMath::float3 &pos, const LiteMath::float3 &dir,
                                     LiteMath::float3 *surface_pos = nullptr,
                                     LiteMath::float3 *surface_normal = nullptr);
 
 // perform sphere tracing to find ray intersection with a whole scene and inside given bbox
 // dir vector MUST be normalized
-bool sdf_sphere_tracing(const SdfScene &sdf, const LiteMath::AABB &sdf_bbox, const LiteMath::float3 &pos, const LiteMath::float3 &dir,
+bool sdf_sphere_tracing(const SdfSceneView &sdf, const LiteMath::AABB &sdf_bbox, const LiteMath::float3 &pos, const LiteMath::float3 &dir,
                         LiteMath::float3 *surface_pos = nullptr);
 
 // save/load scene

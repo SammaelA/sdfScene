@@ -4,7 +4,7 @@
 
 using namespace LiteMath;
 
-float eval_dist_prim(const SdfScene &sdf, unsigned prim_id, float3 p)
+float eval_dist_prim(const SdfSceneView &sdf, unsigned prim_id, float3 p)
 {
   const SdfObject &prim = sdf.objects[prim_id];
   float3 pos = prim.transform * p;
@@ -47,7 +47,7 @@ float eval_dist_prim(const SdfScene &sdf, unsigned prim_id, float3 p)
   return -1000;
 }
 
-float eval_dist_conjunction(const SdfScene &sdf, unsigned conj_id, LiteMath::float3 p)
+float eval_dist_conjunction(const SdfSceneView &sdf, unsigned conj_id, LiteMath::float3 p)
 {
   const SdfConjunction &conj = sdf.conjunctions[conj_id];
   float conj_d = -1e6;
@@ -59,15 +59,15 @@ float eval_dist_conjunction(const SdfScene &sdf, unsigned conj_id, LiteMath::flo
   return conj_d;
 }
 
-float eval_dist_scene(const SdfScene &sdf, float3 p)
+float eval_dist_scene(const SdfSceneView &sdf, float3 p)
 {
   float d = 1e6;
-  for (unsigned i=0;i<sdf.conjunctions.size();i++)
+  for (unsigned i=0;i<sdf.conjunctions_count;i++)
     d = min(d, eval_dist_conjunction(sdf, i, p));
   return d;
 }
 
-bool sdf_conjunction_sphere_tracing(const SdfScene &sdf, unsigned conj_id, const LiteMath::AABB &sdf_bbox, 
+bool sdf_conjunction_sphere_tracing(const SdfSceneView &sdf, unsigned conj_id, const LiteMath::AABB &sdf_bbox, 
                                     const LiteMath::float3 &pos, const LiteMath::float3 &dir,
                                     LiteMath::float3 *surface_pos,
                                     LiteMath::float3 *surface_normal)
@@ -107,7 +107,7 @@ bool sdf_conjunction_sphere_tracing(const SdfScene &sdf, unsigned conj_id, const
   return d <= EPS;
 }
 
-bool sdf_sphere_tracing(const SdfScene &sdf, const AABB &sdf_bbox, const float3 &pos, const float3 &dir,
+bool sdf_sphere_tracing(const SdfSceneView &sdf, const AABB &sdf_bbox, const float3 &pos, const float3 &dir,
                         float3 *surface_pos)
 {
   constexpr float EPS = 1e-5;
