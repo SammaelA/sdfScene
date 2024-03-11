@@ -4,6 +4,8 @@
 
 using namespace LiteMath;
 
+float tmp_mem[2*NEURAL_SDF_MAX_LAYER_SIZE];
+
 float eval_dist_prim(const SdfSceneView &sdf, unsigned prim_id, float3 p)
 {
   const SdfObject &prim = sdf.objects[prim_id];
@@ -38,6 +40,35 @@ float eval_dist_prim(const SdfSceneView &sdf, unsigned prim_id, float3 p)
     float r = sdf.parameters[prim.params_offset + 1];
     float2 d = abs(float2(sqrt(pos.x * pos.x + pos.z * pos.z), pos.y)) - float2(r, h);
     return min(max(d.x, d.y), 0.0f) + length(max(d, float2(0.0f)));
+  }
+  case SdfPrimitiveType::SIREN:
+  {
+    auto &prop = sdf.neural_properties[prim.neural_id];
+    unsigned t_ofs1 = 0;
+    unsigned t_ofs2 = NEURAL_SDF_MAX_LAYER_SIZE;
+
+    tmp_mem[t_ofs1+0] = p.x;
+    tmp_mem[t_ofs1+1] = p.y;
+    tmp_mem[t_ofs1+2] = p.z;
+
+    for (int l=0;l<prop.layer_count;l++)
+    {
+      unsigned m_ofs = prop.layers[l].offset;
+      unsigned b_ofs = prop.layers[l].offset + prop.layers[l].in_size*prop.layers[l].out_size;
+      for (int i=0;i<prop.layers[l].out_size;i++)
+      {
+        tmp_mem[t_ofs2 + i] = sdf.parameters[b_ofs + i];
+        for (int j=0;j<prop.layers[l].in_size;j++)
+          tmp_mem[t_ofs2 + i] += tmp_mem[t_ofs1 + j]*sdf.parameters[m_ofs + i*prop.layers[l].in_size + j];
+        if (l < prop.layer_count-1)
+          tmp_mem[t_ofs2 + i] = std::sin(SIREN_W0*tmp_mem[t_ofs2 + i]);      
+      }
+
+      t_ofs2 = t_ofs1;
+      t_ofs1 = (t_ofs1 + NEURAL_SDF_MAX_LAYER_SIZE) % (2*NEURAL_SDF_MAX_LAYER_SIZE);
+    }
+
+    return tmp_mem[t_ofs1];
   }
   default:
     fprintf(stderr, "unknown type %u", prim.type);
@@ -172,6 +203,44 @@ void load_sdf_scene(SdfScene &scene, const std::string &path)
   fs.read((char *)scene.objects.data(), o_count * sizeof(SdfObject));
   fs.read((char *)scene.parameters.data(), p_count * sizeof(float));
   fs.close();
+}
+
+void load_neural_sdf_scene_SIREN(SdfScene &scene, const std::string &path)
+{
+  constexpr unsigned layers = 4;
+  constexpr unsigned sz = 64;
+  
+  unsigned p_cnt = 3 * sz + 1 * sz + (layers - 1) * sz + 1 + (layers - 2) * sz * sz;
+  scene.parameters.resize(p_cnt, 0.0f);
+  std::ifstream fs(path, std::ios::binary);
+  fs.read((char *)(scene.parameters.data()), sizeof(float) * p_cnt);
+
+  scene.neural_properties.emplace_back();
+  scene.neural_properties[0].layer_count = layers;
+  scene.neural_properties[0].layers[0].in_size = 3;
+  for (int i = 1; i < layers; i++)
+    scene.neural_properties[0].layers[i].in_size = sz;
+  for (int i = 0; i < layers - 1; i++)
+    scene.neural_properties[0].layers[i].out_size = sz;
+  scene.neural_properties[0].layers[layers - 1].out_size = 1;
+  unsigned off = 0;
+  for (int i = 0; i < layers; i++)
+  {
+    scene.neural_properties[0].layers[i].offset = off;
+    off += (scene.neural_properties[0].layers[i].in_size + 1) * scene.neural_properties[0].layers[i].out_size;
+  }
+
+  scene.objects.emplace_back();
+  scene.objects[0].type = SdfPrimitiveType::SIREN;
+  scene.objects[0].params_offset = 0;
+  scene.objects[0].params_count = p_cnt;
+  scene.objects[0].bbox = AABB({-1, -1, -1}, {1, 1, 1});
+  scene.objects[0].transform.identity();
+
+  scene.conjunctions.emplace_back();
+  scene.conjunctions[0].offset = 0;
+  scene.conjunctions[0].size = 1;
+  scene.conjunctions[0].bbox = scene.objects[0].bbox;
 }
 
 //Saves SdfScene as a separate hydra-xml file with no lights, materials and textures
