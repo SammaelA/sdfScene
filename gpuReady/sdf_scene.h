@@ -1,8 +1,79 @@
-#include "sdf_scene_gpu.h"
 
-using namespace LiteMath;
+#pragma once
+#include "LiteMath/LiteMath.h"
+#include <vector>
 
-float2 box_intersects(const float3 &min_pos, const float3 &max_pos, const float3 &origin, const float3 &dir)
+using LiteMath::float2;
+using LiteMath::float3;
+using LiteMath::float4;
+using LiteMath::uint2;
+using LiteMath::uint3;
+using LiteMath::uint4;
+using LiteMath::int2;
+using LiteMath::int3;
+using LiteMath::int4;
+using LiteMath::float4x4;
+using LiteMath::float3x3;
+using LiteMath::cross;
+using LiteMath::dot;
+using LiteMath::length;
+using LiteMath::normalize;
+using LiteMath::to_float4;
+using LiteMath::to_float3;
+using LiteMath::max;
+using LiteMath::min;
+
+// enum SdfPrimitiveType
+static constexpr unsigned SDF_PRIM_SPHERE = 0;
+static constexpr unsigned SDF_PRIM_BOX = 1;
+static constexpr unsigned SDF_PRIM_CYLINDER = 2;
+static constexpr unsigned SDF_PRIM_SIREN = 3;
+
+struct SdfObject
+{
+  unsigned type;          // from enum SdfPrimitiveType
+  unsigned params_offset; // in parameters vector
+  unsigned params_count;
+  unsigned neural_id; // index in neural_properties if type is neural
+  float distance_mult;
+  float distance_add;
+  float3 max_pos;
+  float3 min_pos;
+  float4x4 transform;
+  unsigned complement; // 0 or 1
+};
+struct SdfConjunction
+{
+  unsigned offset; // in objects vector
+  unsigned size;
+  float3 max_pos;
+  float3 min_pos;
+};
+
+constexpr int NEURAL_SDF_MAX_LAYERS = 8;
+constexpr int NEURAL_SDF_MAX_LAYER_SIZE = 1024;
+constexpr float SIREN_W0 = 30;
+
+struct NeuralDenseLayer
+{
+  unsigned offset;
+  unsigned in_size;
+  unsigned out_size;
+};
+struct NeuralProperties
+{
+  unsigned layer_count;
+  NeuralDenseLayer layers[NEURAL_SDF_MAX_LAYERS];
+};
+
+struct SdfHit
+{
+  unsigned hit_id; // 0 if no hit
+  float3 hit_pos;
+  float3 hit_norm;
+};
+
+static float2 box_intersects(const float3 &min_pos, const float3 &max_pos, const float3 &origin, const float3 &dir)
 {
   float3 safe_dir = sign(dir) * max(float3(1e-9f), abs(dir));
   float3 tMin = (min_pos - origin) / safe_dir;
@@ -15,7 +86,7 @@ float2 box_intersects(const float3 &min_pos, const float3 &max_pos, const float3
   return float2(tNear, tFar);
 }
 
-float eval_dist_prim(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
+static float eval_dist_prim(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
                      unsigned parameters_count, unsigned objects_count, unsigned conjunctions_count, unsigned neural_properties_count,
                      unsigned prim_id, float3 p)
 {
@@ -91,7 +162,7 @@ float eval_dist_prim(const float *parameters, const SdfObject *objects, const Sd
   return -1000;
 }
 
-float eval_dist_conjunction(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
+static float eval_dist_conjunction(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
                             unsigned parameters_count, unsigned objects_count, unsigned conjunctions_count, unsigned neural_properties_count,
                             unsigned conj_id, float3 p)
 {
@@ -107,66 +178,16 @@ float eval_dist_conjunction(const float *parameters, const SdfObject *objects, c
   }
   return conj_d;
 }
+
+// evaluate distance to a whole scene (minimum of distances to all conjunctions)
+float eval_dist_scene(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
+                      unsigned parameters_count, unsigned objects_count, unsigned conjunctions_count, unsigned neural_properties_count,
+                      float3 p);
+
+// perform sphere tracing to find ray intersection with a specific conjunction and inside given bbox
+// (it can be smaller than real bbox of conjunction). Use with acceleration structure on conjunction bboxes
+// dir vector MUST be normalized
 SdfHit sdf_conjunction_sphere_tracing(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
-                                    unsigned parameters_count, unsigned objects_count, unsigned conjunctions_count, unsigned neural_properties_count,
-                                    unsigned conj_id, const float3 &min_pos, const float3 &max_pos,
-                                    const float3 &pos, const float3 &dir, bool need_norm)
-{
-  constexpr float EPS = 1e-5;
-
-  SdfHit hit;
-  float2 tNear_tFar = box_intersects(min_pos, max_pos, pos, dir);
-  float t = tNear_tFar.x;
-  float tFar = tNear_tFar.y;
-  if (t > tFar)
-    return hit;
-  
-  int iter = 0;
-  float d = eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
-                                  parameters_count, objects_count, conjunctions_count, neural_properties_count,
-                                  conj_id, pos + t * dir);
-  while (iter < 1000 && d > EPS && t < tFar)
-  {
-    t += d + EPS;
-    d = eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
-                              parameters_count, objects_count, conjunctions_count, neural_properties_count,
-                              conj_id, pos + t * dir);
-    iter++;
-  }
-
-  float3 p0 = pos + t * dir;
-  float3 norm = float3(1,0,0);
-  if (need_norm)
-  {
-    constexpr float h = 0.001;
-    float ddx = (eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
-                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
-                                       conj_id, p0 + float3(h, 0, 0)) -
-                 eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
-                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
-                                       conj_id, p0 + float3(-h, 0, 0))) /
-                (2 * h);
-    float ddy = (eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
-                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
-                                       conj_id, p0 + float3(0, h, 0)) -
-                 eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
-                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
-                                       conj_id, p0 + float3(0, -h, 0))) /
-                (2 * h);
-    float ddz = (eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
-                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
-                                       conj_id, p0 + float3(0, 0, h)) -
-                 eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
-                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
-                                       conj_id, p0 + float3(0, 0, -h))) /
-                (2 * h);
-
-    norm = normalize(float3(ddx, ddy, ddz));
-    // fprintf(stderr, "st %d (%f %f %f)\n", iter, surface_normal->x, surface_normal->y, surface_normal->z);
-  }
-  // fprintf(stderr, "st %d (%f %f %f)", iter, p0.x, p0.y, p0.z);
-  hit.hit_id = (unsigned)(d <= EPS);
-  hit.hit_pos = p0;
-  hit.hit_norm = norm;
-  return {(unsigned)(d <= EPS), p0, norm};
-}
+                                      unsigned parameters_count, unsigned objects_count, unsigned conjunctions_count, unsigned neural_properties_count,
+                                      unsigned conj_id, const float3 &min_pos, const float3 &max_pos,
+                                      const float3 &pos, const float3 &dir, bool need_norm = false);

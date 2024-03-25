@@ -1,8 +1,8 @@
 #pragma once
-#include "sdf_scene_gpu.h"
+#include "gpuReady/sdf_scene.h"
 #include <string>
 
-
+#ifndef KERNEL_SLICER
 struct SdfScene
 {
   std::vector<float> parameters;
@@ -65,3 +65,4 @@ void save_sdf_scene_hydra(const SdfScene &scene, const std::string &folder, cons
 void save_sdf_scene(const SdfScene &scene, const std::string &path);
 void load_sdf_scene(SdfScene &scene, const std::string &path);
 void load_neural_sdf_scene_SIREN(SdfScene &scene, const std::string &path); // loads scene from raw SIREN weights file
+#endif
