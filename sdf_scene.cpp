@@ -4,11 +4,26 @@
 
 using namespace LiteMath;
 
-float tmp_mem[2*NEURAL_SDF_MAX_LAYER_SIZE];
+float tmp_mem[2 * NEURAL_SDF_MAX_LAYER_SIZE];
 
-float eval_dist_prim(const SdfSceneView &sdf, unsigned prim_id, float3 p)
+float2 box_intersects(const float3 &min_pos, const float3 &max_pos, const float3 &origin, const float3 &dir)
 {
-  const SdfObject &prim = sdf.objects[prim_id];
+  float3 safe_dir = sign(dir) * max(float3(1e-9f), abs(dir));
+  float3 tMin = (min_pos - origin) / safe_dir;
+  float3 tMax = (max_pos - origin) / safe_dir;
+  float3 t1 = min(tMin, tMax);
+  float3 t2 = max(tMin, tMax);
+  float tNear = std::max(t1.x, std::max(t1.y, t1.z));
+  float tFar = std::min(t2.x, std::min(t2.y, t2.z));
+
+  return float2(tNear, tFar);
+}
+
+float eval_dist_prim(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
+                     unsigned parameters_count, unsigned objects_count, unsigned conjunctions_count, unsigned neural_properties_count,
+                     unsigned prim_id, float3 p)
+{
+  const SdfObject &prim = objects[prim_id];
   float3 pos = prim.transform * p;
   // printf("%f %f %f -- %f %f %f\n", p.x, p.y, p.z, pos.x, pos.y, pos.z);
   // printf("%f %f %f %f\n %f %f %f %f\n %f %f %f %f\n %f %f %f %f\n",
@@ -19,53 +34,53 @@ float eval_dist_prim(const SdfSceneView &sdf, unsigned prim_id, float3 p)
 
   switch (prim.type)
   {
-  case SdfPrimitiveType::SPHERE:
+  case SDF_PRIM_SPHERE:
   {
-    float r = sdf.parameters[prim.params_offset + 0];
+    float r = parameters[prim.params_offset + 0];
     // fprintf(stderr, "sphere %f %f %f - %f",pos.x, pos.y, pos.z, r);
     return length(pos) - r;
   }
-  case SdfPrimitiveType::BOX:
+  case SDF_PRIM_BOX:
   {
-    float3 size(sdf.parameters[prim.params_offset + 0],
-                sdf.parameters[prim.params_offset + 1],
-                sdf.parameters[prim.params_offset + 2]);
+    float3 size(parameters[prim.params_offset + 0],
+                parameters[prim.params_offset + 1],
+                parameters[prim.params_offset + 2]);
     // fprintf(stderr, "box %f %f %f - %f %f %f - %f %f %f",p.x, p.y, p.z, pos.x, pos.y, pos.z, size.x, size.y, size.z);
     float3 q = abs(pos) - size;
     return length(max(q, float3(0.0f))) + min(max(q.x, max(q.y, q.z)), 0.0f);
   }
-  case SdfPrimitiveType::CYLINDER:
+  case SDF_PRIM_CYLINDER:
   {
-    float h = sdf.parameters[prim.params_offset + 0];
-    float r = sdf.parameters[prim.params_offset + 1];
+    float h = parameters[prim.params_offset + 0];
+    float r = parameters[prim.params_offset + 1];
     float2 d = abs(float2(sqrt(pos.x * pos.x + pos.z * pos.z), pos.y)) - float2(r, h);
     return min(max(d.x, d.y), 0.0f) + length(max(d, float2(0.0f)));
   }
-  case SdfPrimitiveType::SIREN:
+  case SDF_PRIM_SIREN:
   {
-    auto &prop = sdf.neural_properties[prim.neural_id];
+    auto &prop = neural_properties[prim.neural_id];
     unsigned t_ofs1 = 0;
     unsigned t_ofs2 = NEURAL_SDF_MAX_LAYER_SIZE;
 
-    tmp_mem[t_ofs1+0] = p.x;
-    tmp_mem[t_ofs1+1] = p.y;
-    tmp_mem[t_ofs1+2] = p.z;
+    tmp_mem[t_ofs1 + 0] = p.x;
+    tmp_mem[t_ofs1 + 1] = p.y;
+    tmp_mem[t_ofs1 + 2] = p.z;
 
-    for (int l=0;l<prop.layer_count;l++)
+    for (int l = 0; l < prop.layer_count; l++)
     {
       unsigned m_ofs = prop.layers[l].offset;
-      unsigned b_ofs = prop.layers[l].offset + prop.layers[l].in_size*prop.layers[l].out_size;
-      for (int i=0;i<prop.layers[l].out_size;i++)
+      unsigned b_ofs = prop.layers[l].offset + prop.layers[l].in_size * prop.layers[l].out_size;
+      for (int i = 0; i < prop.layers[l].out_size; i++)
       {
-        tmp_mem[t_ofs2 + i] = sdf.parameters[b_ofs + i];
-        for (int j=0;j<prop.layers[l].in_size;j++)
-          tmp_mem[t_ofs2 + i] += tmp_mem[t_ofs1 + j]*sdf.parameters[m_ofs + i*prop.layers[l].in_size + j];
-        if (l < prop.layer_count-1)
-          tmp_mem[t_ofs2 + i] = std::sin(SIREN_W0*tmp_mem[t_ofs2 + i]);      
+        tmp_mem[t_ofs2 + i] = parameters[b_ofs + i];
+        for (int j = 0; j < prop.layers[l].in_size; j++)
+          tmp_mem[t_ofs2 + i] += tmp_mem[t_ofs1 + j] * parameters[m_ofs + i * prop.layers[l].in_size + j];
+        if (l < prop.layer_count - 1)
+          tmp_mem[t_ofs2 + i] = std::sin(SIREN_W0 * tmp_mem[t_ofs2 + i]);
       }
 
       t_ofs2 = t_ofs1;
-      t_ofs1 = (t_ofs1 + NEURAL_SDF_MAX_LAYER_SIZE) % (2*NEURAL_SDF_MAX_LAYER_SIZE);
+      t_ofs1 = (t_ofs1 + NEURAL_SDF_MAX_LAYER_SIZE) % (2 * NEURAL_SDF_MAX_LAYER_SIZE);
     }
 
     return tmp_mem[t_ofs1];
@@ -78,14 +93,19 @@ float eval_dist_prim(const SdfSceneView &sdf, unsigned prim_id, float3 p)
   return -1000;
 }
 
-float eval_dist_conjunction(const SdfSceneView &sdf, unsigned conj_id, LiteMath::float3 p)
+float eval_dist_conjunction(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
+                            unsigned parameters_count, unsigned objects_count, unsigned conjunctions_count, unsigned neural_properties_count,
+                            unsigned conj_id, LiteMath::float3 p)
 {
-  const SdfConjunction &conj = sdf.conjunctions[conj_id];
+  const SdfConjunction &conj = conjunctions[conj_id];
   float conj_d = -1e6;
   for (unsigned pid = conj.offset; pid < conj.offset + conj.size; pid++)
   {
-    float prim_d = sdf.objects[pid].distance_mult * eval_dist_prim(sdf, pid, p) + sdf.objects[pid].distance_add;
-    conj_d = max(conj_d, sdf.objects[pid].complement ? -prim_d : prim_d);
+    float prim_d = objects[pid].distance_mult * eval_dist_prim(parameters, objects, conjunctions, neural_properties,
+                                                               parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                                                               pid, p) +
+                   objects[pid].distance_add;
+    conj_d = max(conj_d, objects[pid].complement ? -prim_d : prim_d);
   }
   return conj_d;
 }
@@ -93,62 +113,87 @@ float eval_dist_conjunction(const SdfSceneView &sdf, unsigned conj_id, LiteMath:
 float eval_dist_scene(const SdfSceneView &sdf, float3 p)
 {
   float d = 1e6;
-  for (unsigned i=0;i<sdf.conjunctions_count;i++)
-    d = min(d, eval_dist_conjunction(sdf, i, p));
+  for (unsigned i = 0; i < sdf.conjunctions_count; i++)
+    d = min(d, eval_dist_conjunction(sdf.parameters, sdf.objects, sdf.conjunctions, sdf.neural_properties,
+                                     sdf.parameters_count, sdf.objects_count, sdf.conjunctions_count, sdf.neural_properties_count,
+                                     i, p));
   return d;
 }
 
-bool sdf_conjunction_sphere_tracing(const SdfSceneView &sdf, unsigned conj_id, const LiteMath::AABB &sdf_bbox, 
-                                    const LiteMath::float3 &pos, const LiteMath::float3 &dir,
-                                    LiteMath::float3 *surface_pos,
-                                    LiteMath::float3 *surface_normal)
+SdfHit sdf_conjunction_sphere_tracing(const float *parameters, const SdfObject *objects, const SdfConjunction *conjunctions, const NeuralProperties *neural_properties,
+                                    unsigned parameters_count, unsigned objects_count, unsigned conjunctions_count, unsigned neural_properties_count,
+                                    unsigned conj_id, const float3 &min_pos, const float3 &max_pos,
+                                    const LiteMath::float3 &pos, const LiteMath::float3 &dir, bool need_norm)
 {
   constexpr float EPS = 1e-5;
-  float t = 0;
-  float tFar = 1e4;
-  if (!sdf_bbox.contains(pos))
-  {
-    if (!sdf_bbox.intersects(pos, dir, &t, &tFar))
-      return false;
-  }
+
+  SdfHit hit;
+  float2 tNear_tFar = box_intersects(min_pos, max_pos, pos, dir);
+  float t = tNear_tFar.x;
+  float tFar = tNear_tFar.y;
+  if (t > tFar)
+    return hit;
+  
   int iter = 0;
-  float d = eval_dist_conjunction(sdf, conj_id, pos + t * dir);
+  float d = eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
+                                  parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                                  conj_id, pos + t * dir);
   while (iter < 1000 && d > EPS && t < tFar)
   {
     t += d + EPS;
-    d = eval_dist_conjunction(sdf, conj_id, pos + t * dir);
+    d = eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
+                              parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                              conj_id, pos + t * dir);
     iter++;
   }
 
-  if (surface_pos)
-    *surface_pos = pos + t * dir;
-
-  if (surface_normal)
+  float3 p0 = pos + t * dir;
+  float3 norm = float3(1,0,0);
+  if (need_norm)
   {
-    float3 p0 = pos + t * dir;
     constexpr float h = 0.001;
-    float ddx = (eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(h, 0, 0)) - eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(-h, 0, 0))) / (2 * h);
-    float ddy = (eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(0, h, 0)) - eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(0, -h, 0))) / (2 * h);
-    float ddz = (eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(0, 0, h)) - eval_dist_conjunction(sdf, conj_id, p0 + LiteMath::float3(0, 0, -h))) / (2 * h);
-    
-    *surface_normal = normalize(float3(ddx, ddy, ddz));
-    //fprintf(stderr, "st %d (%f %f %f)\n", iter, surface_normal->x, surface_normal->y, surface_normal->z);
+    float ddx = (eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
+                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                                       conj_id, p0 + LiteMath::float3(h, 0, 0)) -
+                 eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
+                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                                       conj_id, p0 + LiteMath::float3(-h, 0, 0))) /
+                (2 * h);
+    float ddy = (eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
+                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                                       conj_id, p0 + LiteMath::float3(0, h, 0)) -
+                 eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
+                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                                       conj_id, p0 + LiteMath::float3(0, -h, 0))) /
+                (2 * h);
+    float ddz = (eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
+                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                                       conj_id, p0 + LiteMath::float3(0, 0, h)) -
+                 eval_dist_conjunction(parameters, objects, conjunctions, neural_properties,
+                                       parameters_count, objects_count, conjunctions_count, neural_properties_count,
+                                       conj_id, p0 + LiteMath::float3(0, 0, -h))) /
+                (2 * h);
+
+    norm = normalize(float3(ddx, ddy, ddz));
+    // fprintf(stderr, "st %d (%f %f %f)\n", iter, surface_normal->x, surface_normal->y, surface_normal->z);
   }
   // fprintf(stderr, "st %d (%f %f %f)", iter, p0.x, p0.y, p0.z);
-  return d <= EPS;
+  hit.hit_id = (unsigned)(d <= EPS);
+  hit.hit_pos = p0;
+  hit.hit_norm = norm;
+  return {(unsigned)(d <= EPS), p0, norm};
 }
 
-bool sdf_sphere_tracing(const SdfSceneView &sdf, const AABB &sdf_bbox, const float3 &pos, const float3 &dir,
+bool sdf_sphere_tracing(const SdfSceneView &sdf, const float3 &min_pos, const float3 &max_pos, const float3 &pos, const float3 &dir,
                         float3 *surface_pos)
 {
   constexpr float EPS = 1e-5;
-  float t = 0;
-  float tFar = 1e4;
-  if (!sdf_bbox.contains(pos))
-  {
-    if (!sdf_bbox.intersects(pos, dir, &t, &tFar))
-      return false;
-  }
+  float2 tNear_tFar = box_intersects(min_pos, max_pos, pos, dir);
+  float t = tNear_tFar.x;
+  float tFar = tNear_tFar.y;
+  if (t > tFar)
+    return false;
+
   int iter = 0;
   float d = eval_dist_scene(sdf, pos + t * dir);
   while (iter < 1000 && d > EPS && t < tFar)
@@ -209,7 +254,7 @@ void load_neural_sdf_scene_SIREN(SdfScene &scene, const std::string &path)
 {
   constexpr unsigned layers = 4;
   constexpr unsigned sz = 64;
-  
+
   unsigned p_cnt = 3 * sz + 1 * sz + (layers - 1) * sz + 1 + (layers - 2) * sz * sz;
   scene.parameters.resize(p_cnt, 0.0f);
   std::ifstream fs(path, std::ios::binary);
@@ -231,30 +276,32 @@ void load_neural_sdf_scene_SIREN(SdfScene &scene, const std::string &path)
   }
 
   scene.objects.emplace_back();
-  scene.objects[0].type = SdfPrimitiveType::SIREN;
+  scene.objects[0].type = SDF_PRIM_SIREN;
   scene.objects[0].params_offset = 0;
   scene.objects[0].params_count = p_cnt;
-  scene.objects[0].bbox = AABB({-1, -1, -1}, {1, 1, 1});
+  scene.objects[0].min_pos = float3(-1,-1,-1);
+  scene.objects[0].max_pos = float3(1,1,1);
   scene.objects[0].transform.identity();
 
   scene.conjunctions.emplace_back();
   scene.conjunctions[0].offset = 0;
   scene.conjunctions[0].size = 1;
-  scene.conjunctions[0].bbox = scene.objects[0].bbox;
+  scene.conjunctions[0].min_pos = scene.objects[0].min_pos;
+  scene.conjunctions[0].max_pos = scene.objects[0].max_pos;
 }
 
-//Saves SdfScene as a separate hydra-xml file with no lights, materials and textures
-//It's a lazy hack to do it without using Hydra API
-//It saves both binary (<folder>/<name>.bin) and xml (<folder>/<name>.xml) files
+// Saves SdfScene as a separate hydra-xml file with no lights, materials and textures
+// It's a lazy hack to do it without using Hydra API
+// It saves both binary (<folder>/<name>.bin) and xml (<folder>/<name>.xml) files
 void save_sdf_scene_hydra(const SdfScene &scene, const std::string &folder, const std::string &name)
 {
   std::string bin_path = folder + "/" + name + ".bin";
   std::string path = folder + "/" + name + ".xml";
   save_sdf_scene(scene, bin_path);
-  int bytesize = 3*sizeof(unsigned) + sizeof(SdfConjunction)*scene.conjunctions.size() + sizeof(SdfObject)*scene.objects.size() + 
-                 sizeof(float)*scene.parameters.size();
-  char buf[2<<12];
-  snprintf(buf, 2<<12, R""""(
+  int bytesize = 3 * sizeof(unsigned) + sizeof(SdfConjunction) * scene.conjunctions.size() + sizeof(SdfObject) * scene.objects.size() +
+                 sizeof(float) * scene.parameters.size();
+  char buf[2 << 12];
+  snprintf(buf, 2 << 12, R""""(
     <?xml version="1.0"?>
     <textures_lib>
     </textures_lib>
@@ -296,7 +343,8 @@ void save_sdf_scene_hydra(const SdfScene &scene, const std::string &folder, cons
         <instance id="1" mesh_id="1" rmap_id="0" scn_id="0" scn_sid="0" matrix="0.7 0 0 1    0 0.7 0 0   0 0 0.7 0   0 0 0 1 " />
       </scene>
     </scenes>
-  )"""", bytesize, (name + ".bin").c_str());
+  )"""",
+           bytesize, (name + ".bin").c_str());
 
   std::ofstream fs(path);
   fs << std::string(buf);
