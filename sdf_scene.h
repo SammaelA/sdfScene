@@ -57,6 +57,7 @@ struct SdfSceneView
 
 // perform sphere tracing to find ray intersection with a whole scene and inside given bbox
 // dir vector MUST be normalized
+float eval_dist_scene(const SdfSceneView &sdf, float3 p);
 bool sdf_sphere_tracing(const SdfSceneView &sdf, const LiteMath::float3 &min_pos, const LiteMath::float3 &max_pos, const LiteMath::float3 &pos, const LiteMath::float3 &dir,
                         LiteMath::float3 *surface_pos = nullptr);
 

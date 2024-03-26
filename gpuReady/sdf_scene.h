@@ -37,17 +37,19 @@ struct SdfObject
   unsigned neural_id; // index in neural_properties if type is neural
   float distance_mult;
   float distance_add;
-  float3 max_pos;
-  float3 min_pos;
+  float4 max_pos;    //float4 to prevent padding issues
+  float4 min_pos;    //float4 to prevent padding issues
   float4x4 transform;
   unsigned complement; // 0 or 1
+  unsigned _pad; 
 };
 struct SdfConjunction
 {
+  float4 max_pos;
+  float4 min_pos;
   unsigned offset; // in objects vector
   unsigned size;
-  float3 max_pos;
-  float3 min_pos;
+  unsigned _pad[2];
 };
 
 constexpr int NEURAL_SDF_MAX_LAYERS = 8;
@@ -68,9 +70,8 @@ struct NeuralProperties
 
 struct SdfHit
 {
-  unsigned hit_id; // 0 if no hit
-  float3 hit_pos;
-  float3 hit_norm;
+  float4 hit_pos;  // hit_pos.w < 0 if no hit, hit_pos.w > 0 otherwise
+  float4 hit_norm; // hit_norm.w is not used
 };
 
 static float2 box_intersects(const float3 &min_pos, const float3 &max_pos, const float3 &origin, const float3 &dir)

@@ -60,8 +60,7 @@ SdfHit sdf_conjunction_sphere_tracing(const float *parameters, const SdfObject *
     // fprintf(stderr, "st %d (%f %f %f)\n", iter, surface_normal->x, surface_normal->y, surface_normal->z);
   }
   // fprintf(stderr, "st %d (%f %f %f)", iter, p0.x, p0.y, p0.z);
-  hit.hit_id = (unsigned)(d <= EPS);
-  hit.hit_pos = p0;
-  hit.hit_norm = norm;
-  return {(unsigned)(d <= EPS), p0, norm};
+  hit.hit_pos = to_float4(p0, (d <= EPS) ? 1 : -1);
+  hit.hit_norm = to_float4(norm, 1.0f);
+  return hit;
 }
