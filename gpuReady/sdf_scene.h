@@ -35,13 +35,16 @@ struct SdfObject
   unsigned params_offset; // in parameters vector
   unsigned params_count;
   unsigned neural_id; // index in neural_properties if type is neural
+
   float distance_mult;
   float distance_add;
-  float4 max_pos;    //float4 to prevent padding issues
-  float4 min_pos;    //float4 to prevent padding issues
-  float4x4 transform;
   unsigned complement; // 0 or 1
   unsigned _pad; 
+
+  float4 max_pos;    //float4 to prevent padding issues
+  float4 min_pos;    //float4 to prevent padding issues
+
+  float4x4 transform;
 };
 struct SdfConjunction
 {
